@@ -1,9 +1,8 @@
-import { useState } from "react";
+
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../services/api";
 import "./AddTask.css";
-
-
 
 function formatLocalDate(date) {
   const year = date.getFullYear();
@@ -17,7 +16,6 @@ function getWeekDays() {
   const today = new Date();
   const day = today.getDay();
 
-  // Monday of the current week
   const monday = new Date(today);
   const diff = day === 0 ? -6 : 1 - day;
   monday.setDate(today.getDate() + diff);
@@ -33,231 +31,243 @@ function getWeekDays() {
         weekday: "long",
       }),
       date: formatLocalDate(date),
-      tasks: [""],
+      savedTasks: [],
+      newTasks: [""],
     });
   }
 
   return days;
 }
 
-
-
 function AddTask() {
-
   const navigate = useNavigate();
 
   const [days, setDays] = useState(getWeekDays());
-
-  const [priority, setPriority] = useState("medium");
-
+  const [priority] = useState("medium");
   const [loading, setLoading] = useState(false);
-
+  const [fetching, setFetching] = useState(true);
   const [message, setMessage] = useState("");
-
   const [error, setError] = useState("");
 
-
-  // =========================================
-  // CHANGE TASK
-  // =========================================
-
-  const handleTaskChange = (
-    dayIndex,
-    taskIndex,
-    value
-  ) => {
-
-    setDays((prevDays) => {
-
-      const updatedDays = [...prevDays];
-
-      updatedDays[dayIndex].tasks[taskIndex] =
-        value;
-
-      return updatedDays;
-    });
-  };
-
-
-  // =========================================
-  // ADD ANOTHER TASK
-  // =========================================
-
-  const addTask = (dayIndex) => {
-  setDays((prevDays) =>
-    prevDays.map((day, index) =>
-      index === dayIndex
-        ? {
-            ...day,
-            tasks: [...day.tasks, ""],
-          }
-        : day
-    )
-  );
-};
-
-
-  // =========================================
-  // REMOVE TASK
-  // =========================================
-
-  const removeTask = (
-    dayIndex,
-    taskIndex
-  ) => {
-
-    setDays((prevDays) => {
-
-      const updatedDays = [...prevDays];
-
-      // At least one input should remain
-      if (
-        updatedDays[dayIndex].tasks.length === 1
-      ) {
-        updatedDays[dayIndex].tasks[0] = "";
-      } else {
-        updatedDays[dayIndex].tasks.splice(
-          taskIndex,
-          1
+  // LOAD PREVIOUSLY SAVED TASKS
+  useEffect(() => {
+    const fetchPreviousTasks = async () => {
+      try {
+        const user = JSON.parse(
+          localStorage.getItem("user") || "{}"
         );
-      }
 
-      return updatedDays;
-    });
+        if (!user?.id) {
+          throw new Error("Please login again.");
+        }
+
+        const response = await api.get("/api/tasks");
+
+        const allTasks = Array.isArray(response.data.tasks)
+          ? response.data.tasks
+          : Array.isArray(response.data)
+          ? response.data
+          : [];
+
+        setDays((previousDays) =>
+          previousDays.map((day) => {
+            const savedTasks = allTasks.filter((task) => {
+              const taskDate = task.start_date
+                ? String(task.start_date).slice(0, 10)
+                : "";
+
+              const assignedUser =
+                task.assigned_to?.id ??
+                task.assigned_to ??
+                task.assigned_to_id;
+
+              return (
+                taskDate === day.date &&
+                String(assignedUser) === String(user.id)
+              );
+            });
+
+            return {
+              ...day,
+              savedTasks,
+            };
+          })
+        );
+      } catch (err) {
+        console.error("Previous tasks error:", err);
+
+        setError(
+          err.response?.data?.message ||
+          err.message ||
+          "Unable to load previous tasks."
+        );
+      } finally {
+        setFetching(false);
+      }
+    };
+
+    fetchPreviousTasks();
+  }, []);
+
+  // CHANGE NEW TASK
+  const handleTaskChange = (dayIndex, taskIndex, value) => {
+    setDays((previousDays) =>
+      previousDays.map((day, index) =>
+        index === dayIndex
+          ? {
+              ...day,
+              newTasks: day.newTasks.map((task, i) =>
+                i === taskIndex ? value : task
+              ),
+            }
+          : day
+      )
+    );
   };
 
+  // ADD ANOTHER TASK
+  const addTask = (dayIndex) => {
+    setDays((previousDays) =>
+      previousDays.map((day, index) =>
+        index === dayIndex
+          ? {
+              ...day,
+              newTasks: [...day.newTasks, ""],
+            }
+          : day
+      )
+    );
+  };
 
-  // =========================================
-  // SAVE WEEKLY TASKS
-  // =========================================
+  // REMOVE NEW TASK
+  const removeTask = (dayIndex, taskIndex) => {
+    setDays((previousDays) =>
+      previousDays.map((day, index) => {
+        if (index !== dayIndex) return day;
 
+        const updatedTasks = day.newTasks.filter(
+          (_, i) => i !== taskIndex
+        );
+
+        return {
+          ...day,
+          newTasks: updatedTasks.length ? updatedTasks : [""],
+        };
+      })
+    );
+  };
+
+  // SAVE ONLY NEW TASKS
   const handleSubmit = async (e) => {
-
     e.preventDefault();
 
     setMessage("");
     setError("");
 
+    const user = JSON.parse(
+      localStorage.getItem("user") || "{}"
+    );
+
+    if (!user?.id) {
+      setError("User information not found. Please login again.");
+      return;
+    }
+
+    const tasksToSave = days.flatMap((day) =>
+      day.newTasks
+        .map((title) => title.trim())
+        .filter(Boolean)
+        .map((title) => ({
+          title,
+          date: day.date,
+        }))
+    );
+
+    if (tasksToSave.length === 0) {
+      setError("Please enter at least one new task.");
+      return;
+    }
+
     setLoading(true);
 
     try {
+      let savedCount = 0;
 
-      const token =
-        localStorage.getItem("token");
+      for (const task of tasksToSave) {
+        await api.post("/api/tasks", {
+          title: task.title,
+          description: "",
+          priority,
+          start_date: task.date,
+          assigned_to: user.id,
+        });
 
-      const user =
-        JSON.parse(
-          localStorage.getItem("user")
-        );
-
-
-      if (!user?.id) {
-        throw new Error(
-          "User information not found. Please login again."
-        );
+        savedCount++;
       }
-
-
-      // =====================================
-      // CREATE ALL TASKS
-      // =====================================
-
-      
-let totalTasks = 0;
-
-for (const day of days) {
-  for (const taskTitle of day.tasks) {
-    const title = taskTitle.trim();
-
-    if (!title) continue;
-
-    await api.post(
-      "/api/tasks",
-      {
-        title,
-        description: "",
-        priority,
-        start_date: day.date,
-        assigned_to: user.id,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      }
-    );
-
-    totalTasks++;
-  }
-}
-
-
-
-      // No task entered
-      if (totalTasks === 0) {
-
-        setError(
-          "Please enter at least one task."
-        );
-
-        return;
-      }
-
 
       setMessage(
-        `${totalTasks} task(s) saved successfully!`
+        `${savedCount} new task(s) saved successfully!`
       );
 
-
-      // Go to tasks after save
-      setTimeout(() => {
-
-        navigate("/tasks");
-
-      }, 1000);
-
-
-    } catch (error) {
-
-      console.error(
-        "Weekly task error:",
-        error
+      // Clear new inputs and reload saved tasks
+      setDays((previousDays) =>
+        previousDays.map((day) => ({
+          ...day,
+          newTasks: [""],
+        }))
       );
+
+      const response = await api.get("/api/tasks");
+
+      const allTasks = Array.isArray(response.data.tasks)
+        ? response.data.tasks
+        : Array.isArray(response.data)
+        ? response.data
+        : [];
+
+      setDays((previousDays) =>
+        previousDays.map((day) => ({
+          ...day,
+          savedTasks: allTasks.filter((task) => {
+            const taskDate = task.start_date
+              ? String(task.start_date).slice(0, 10)
+              : "";
+
+            const assignedUser =
+              task.assigned_to?.id ??
+              task.assigned_to ??
+              task.assigned_to_id;
+
+            return (
+              taskDate === day.date &&
+              String(assignedUser) === String(user.id)
+            );
+          }),
+        }))
+      );
+    } catch (err) {
+      console.error("Weekly task error:", err);
 
       setError(
-        error.response?.data?.message ||
-        error.message ||
-        "Failed to create tasks"
+        err.response?.data?.message ||
+        err.message ||
+        "Failed to save tasks."
       );
-
     } finally {
-
       setLoading(false);
-
     }
   };
 
-
   return (
-
     <div className="weekly-task-page">
-
       <div className="weekly-task-card">
-
-
-        {/* BACK */}
-
         <button
+          type="button"
           className="back-button"
-          onClick={() =>
-            navigate("/tasks")
-          }
+          onClick={() => navigate("/tasks")}
         >
           ← Back to Tasks
         </button>
-
-
-        {/* HEADER */}
 
         <h1>Weekly Tasks</h1>
 
@@ -265,177 +275,120 @@ for (const day of days) {
           Add your tasks from Monday to Saturday.
         </p>
 
-
-        {/* WEEK INFO */}
-
         <div className="week-info">
-
-          <strong>
-            Monday → Saturday
-          </strong>
-
-          <span>
-            Sunday is a holiday
-          </span>
-
+          <strong>Monday → Saturday</strong>
+          <span>Sunday is a holiday</span>
         </div>
 
-
-        {/* SUCCESS */}
-
         {message && (
-
-          <div className="success-message">
-            {message}
-          </div>
-
+          <div className="success-message">{message}</div>
         )}
-
-
-        {/* ERROR */}
 
         {error && (
-
-          <div className="error-message">
-            {error}
-          </div>
-
+          <div className="error-message">{error}</div>
         )}
 
-
-        
-
-
-        {/* DAYS */}
-
-        <form onSubmit={handleSubmit}>
-
-          {days.map(
-            (day, dayIndex) => (
-
-              <div
-                className="day-card"
-                key={day.date}
-              >
-
-                {/* DAY HEADER */}
-
+        {fetching ? (
+          <p>Loading your previous tasks...</p>
+        ) : (
+          <form onSubmit={handleSubmit}>
+            {days.map((day, dayIndex) => (
+              <div className="day-card" key={day.date}>
                 <div className="day-header">
-
                   <div>
-
-                    <h3>
-                      {day.name}
-                    </h3>
+                    <h3>{day.name}</h3>
 
                     <span>
                       {new Date(
-                        day.date
-                      ).toLocaleDateString(
-                        "en-IN",
-                        {
-                          day: "2-digit",
-                          month: "short",
-                          year: "numeric",
-                        }
-                      )}
+                        day.date + "T00:00:00"
+                      ).toLocaleDateString("en-IN", {
+                        day: "2-digit",
+                        month: "short",
+                        year: "numeric",
+                      })}
                     </span>
-
                   </div>
-
                 </div>
 
-
-                {/* TASK INPUTS */}
-
-                <div className="day-tasks">
-
-                  {day.tasks.map(
-                    (task, taskIndex) => (
-
+                {/* PREVIOUSLY SAVED TASKS */}
+                {day.savedTasks.length > 0 && (
+                  <div className="day-tasks">
+                    {day.savedTasks.map((task) => (
                       <div
                         className="task-input-row"
-                        key={taskIndex}
+                        key={task.id}
                       >
-
-                        <span className="bullet">
-                          •
-                        </span>
+                        <span className="bullet">•</span>
 
                         <input
                           type="text"
-                          value={task}
-                          onChange={(e) =>
-                            handleTaskChange(
-                              dayIndex,
-                              taskIndex,
-                              e.target.value
-                            )
-                          }
-                          placeholder="Enter task..."
+                          value={task.title || ""}
+                          readOnly
+                          className="saved-task-input"
                         />
-
-
-                        {/* DELETE TASK */}
-
-                        {day.tasks.length > 1 && (
-
-                          <button
-                            type="button"
-                            className="remove-task"
-                            onClick={() =>
-                              removeTask(
-                                dayIndex,
-                                taskIndex
-                              )
-                            }
-                          >
-                            ×
-                          </button>
-
-                        )}
-
                       </div>
+                    ))}
+                  </div>
+                )}
 
-                    )
-                  )}
+                {/* NEW TASK INPUTS */}
+                <div className="day-tasks">
+                  {day.newTasks.map((task, taskIndex) => (
+                    <div
+                      className="task-input-row"
+                      key={taskIndex}
+                    >
+                      <span className="bullet">•</span>
 
+                      <input
+                        type="text"
+                        value={task}
+                        onChange={(e) =>
+                          handleTaskChange(
+                            dayIndex,
+                            taskIndex,
+                            e.target.value
+                          )
+                        }
+                        placeholder="Enter task..."
+                      />
+
+                      {day.newTasks.length > 1 && (
+                        <button
+                          type="button"
+                          className="remove-task"
+                          onClick={() =>
+                            removeTask(dayIndex, taskIndex)
+                          }
+                        >
+                          ×
+                        </button>
+                      )}
+                    </div>
+                  ))}
                 </div>
 
-
-                {/* ADD ANOTHER */}
-
-          <button
-  type="button"
-  onClick={() => addTask(dayIndex)}
->
-  + Add another task
-</button>
-
+                <button
+                  type="button"
+                  onClick={() => addTask(dayIndex)}
+                >
+                  + Add another task
+                </button>
               </div>
+            ))}
 
-            )
-          )}
-
-
-          {/* SAVE */}
-
-          <button
-            type="submit"
-            className="save-weekly-task"
-            disabled={loading}
-          >
-
-            {loading
-              ? "Saving Tasks..."
-              : "Save Weekly Tasks"}
-
-          </button>
-
-        </form>
-
+            <button
+              type="submit"
+              className="save-weekly-task"
+              disabled={loading}
+            >
+              {loading
+                ? "Saving Tasks..."
+                : "Save Weekly Tasks"}
+            </button>
+          </form>
+        )}
       </div>
-
     </div>
   );
 }

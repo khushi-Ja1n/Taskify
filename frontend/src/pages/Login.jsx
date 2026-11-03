@@ -44,7 +44,7 @@ function Login() {
     <div className="auth-page">
       <div className="auth-card">
         <div className="auth-header">
-          <div className="logo-icon">ET</div>
+         
 
           <h1>Taskify</h1>
 

@@ -303,40 +303,7 @@ for (const day of days) {
         )}
 
 
-        {/* PRIORITY */}
-
-        <div className="priority-section">
-
-          <label>
-            Priority
-          </label>
-
-          <select
-            value={priority}
-            onChange={(e) =>
-              setPriority(e.target.value)
-            }
-          >
-
-            <option value="low">
-              Low
-            </option>
-
-            <option value="medium">
-              Medium
-            </option>
-
-            <option value="high">
-              High
-            </option>
-
-            <option value="urgent">
-              Urgent
-            </option>
-
-          </select>
-
-        </div>
+        
 
 
         {/* DAYS */}

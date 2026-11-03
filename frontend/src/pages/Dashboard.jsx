@@ -615,22 +615,7 @@ function Dashboard() {
                   />
                 </div>
 
-                <div className="form-field">
-                  <label htmlFor="account-department">Department ID</label>
-                  <input
-                    id="account-department"
-                    type="number"
-                    min="1"
-                    value={accountForm.department_id}
-                    onChange={(event) =>
-                      setAccountForm({
-                        ...accountForm,
-                        department_id: event.target.value,
-                      })
-                    }
-                    placeholder="Optional existing department ID"
-                  />
-                </div>
+                
 
                 <div className="form-field">
                   <label htmlFor="account-role">Account role *</label>

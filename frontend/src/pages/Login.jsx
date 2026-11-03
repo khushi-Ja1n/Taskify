@@ -46,7 +46,7 @@ function Login() {
         <div className="auth-header">
           <div className="logo-icon">ET</div>
 
-          <h1>Employee Task Portal</h1>
+          <h1>Taskify</h1>
 
           <p>Manage your tasks efficiently</p>
         </div>
